@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8" />
+    <title>議事録クレンジング</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        .drop-areas {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .drop-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            flex: 1;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .button-group .btn {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="drop-areas">
+            <div id="drop-area-left" class="drop-area">ここにファイルをドラッグ＆ドロップしてください（上書き）</div>
+            <div id="drop-area-right" class="drop-area">ここにファイルをドラッグ＆ドロップしてください（追記）</div>
+        </div>
+        <textarea id="input" class="form-control mb-3" rows="10" cols="50"></textarea>
+        <div class="button-group mb-3">
+            <button class="btn btn-primary" onclick="proofreadData()">文章校正</button>
+            <button class="btn btn-secondary" onclick="cleanseData()">クレンジング</button>
+            <button class="btn btn-danger" onclick="clearData()">クリア</button>
+            <button id="navigate-button" class="btn btn-info">GAIへ移動</button>
+        </div>
+        <h2 class="mt-4">変換後のテキスト</h2>
+        <pre id="output" class="border p-3"></pre>
+    </div>
+    <script>
+        document.addEventListener("DOMContentLoaded", (event) => {
+            setupDragAndDrop("drop-area-left", false);
+            setupDragAndDrop("drop-area-right", true);
+            setupNavigateButton();
+        });
+
+        function setupDragAndDrop(elementId, isAppend) {
+            const dropArea = document.getElementById(elementId);
+            const textArea = document.getElementById("input");
+
+            dropArea.addEventListener("dragover", (event) => {
+                event.preventDefault();
+                dropArea.style.borderColor = "blue";
+            });
+
+            dropArea.addEventListener("dragleave", (event) => {
+                dropArea.style.borderColor = "#ccc";
+            });
+
+            dropArea.addEventListener("drop", (event) => {
+                event.preventDefault();
+                dropArea.style.borderColor = "#ccc";
+
+                const file = event.dataTransfer.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const text = event.target.result;
+                        const processedText = text.charCodeAt(0) === 0xfeff ? text.substring(1) : text;
+                        if (isAppend) {
+                            textArea.value += '\n' + processedText;
+                        } else {
+                            textArea.value = processedText;
+                        }
+                    };
+                    reader.readAsText(file, "UTF-8");
+                }
+            });
+        }
+
+        function setupNavigateButton() {
+            document.getElementById('navigate-button').addEventListener('click', function() {
+                window.open('', '_blank'); // 新しいタブで開く
+            });
+        }
+
+        function cleanseData() {
+            const input = document.getElementById("input").value;
+            const output = document.getElementById("output");
+            const todayFormatted = formatDate(new Date());
+            const nextWeekFormatted = formatDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+
+            const cleansed = cleanseInput(input);
+            const nextMeetingDate = extractNextMeetingDate(input, nextWeekFormatted);
+
+            const formattedOutput = generateFormattedOutput(cleansed, todayFormatted, nextMeetingDate);
+            output.textContent = formattedOutput;
+
+            copyToClipboard(formattedOutput);
+        }
+
+        function clearData() {
+            document.getElementById("input").value = "";
+            document.getElementById("output").textContent = "";
+        }
+
+        function proofreadData() {
+            const input = document.getElementById("input").value;
+            const output = document.getElementById("output");
+
+            const cleansed = cleanseInput(input);
+            const proofreadPrompt = generateProofreadPrompt(cleansed);
+
+            output.textContent = proofreadPrompt;
+            copyToClipboard(proofreadPrompt);
+        }
+
+        function formatDate(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}/${month}/${day}`;
+        }
+
+        function cleanseInput(input) {
+            const lines = input.split("\n");
+            const isAlreadyCleansed = !(lines[0].includes("WEBVTT"));
+
+            if (isAlreadyCleansed) {
+                return input;
+            } else {
+                return lines.filter((line) => line.includes("<v "))
+                            .map((line) => {
+                                const match = line.match(/<v (.*?)>.*?<\/v>/);
+                                if (match) {
+                                    const name = match[1].split("（")[0].trim();
+                                    const text = line.split(">")[1].split("<")[0];
+                                    return `${name}: ${text}`;
+                                }
+                                return "";
+                            })
+                            .filter((line) => line)
+                            .join("\n");
+            }
+        }
+
+        function extractNextMeetingDate(input, defaultDate) {
+            const match = input.match(/次回.*?(\d{4}\/\d{2}\/\d{2})/);
+            return match ? match[1] : defaultDate;
+        }
+
+        function generateFormattedOutput(cleansed, todayFormatted, nextMeetingDate) {
+            return `
+あなたは、議事録担当者です。以下のフォーマットに沿って、[会議内容]をまとめて出力してください。
+
+日付は、今日の当日の日付でお願いします。
+場所は、全てオンラインMTG(Teams)でお願いします。
+次回会議は、会議の内容から判断して設定してください。
+フォーマットの[]で囲まれた箇所は重要な点になるので、抜け漏れなく出力をしてください。
+発言された重要な話題、結論、日程などを含めて出力してください。
+一つの話題は、最大10記事にしてください。重複する議題はまとめてください。
+アウトプットは、議事録のみにお願いします。
+以下に議事録のフォーマットを示します。これに従って議事録を作成してください。
+
+#会議内容
+${cleansed}
+
+### 議事録
+
+**会議名:** [会議の名称]
+**日付** ${todayFormatted}
+**時間** [開始時間]〜[終了時間]
+**場所** オンラインMTG(Teams)
+**出席者** [出席者]
+
+### 議題
+
+**議題1:** [議題の簡潔な説明]
+- **概要:** [議題の概要や重要なポイント]
+- **決定事項:** [決定された内容]
+- **持ち越し事項/宿題:** [次回までに解決すべき課題や担当者]
+
+**議題2:** [議題の簡潔な説明]
+- **概要:** [議題の概要や重要なポイント]
+- **決定事項:** [決定された内容]
+- **持ち越し事項/宿題:** [次回までに解決すべき課題や担当者]
+
+(必要に応じて議題を追加)
+
+### 次回会議
+
+**日付** ${nextMeetingDate}
+**時間** [開始時間]〜[終了時間]
+**場所** オンラインMTG(Teams)
+`;
+        }
+
+        function generateProofreadPrompt(cleansed) {
+            return `
+あなたは、文章校正の専門家です。対象は、音声の言語化ファイルです。
+日本語以外の文章が混ざっている場合は、日本語へ翻訳してください。
+校正を行い、正しい文法、適切な表現、整った構成に修正してください。
+また、主体の内容が一致しているか確認し、必要に応じて修正を加えてください。
+言語ファイルと同じ形で出力してください。文章の終わり「。」の後に改行コードを追加してください。
+出力するのは、言語ファイル情報のみでお願いします。
+${cleansed}
+`;
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert("クリップボードにコピーされました。");
+            }).catch((err) => {
+                console.error("クリップボードへのコピーに失敗しました:", err);
+            });
+        }
+    </script>
+</body>
+</html>
